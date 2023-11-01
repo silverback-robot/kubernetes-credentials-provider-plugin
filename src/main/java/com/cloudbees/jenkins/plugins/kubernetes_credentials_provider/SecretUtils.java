@@ -29,6 +29,9 @@ import java.nio.charset.CharacterCodingException;
 import java.nio.charset.CharsetDecoder;
 import java.nio.charset.CodingErrorAction;
 import java.nio.charset.StandardCharsets;
+import java.security.InvalidKeyException;
+import java.security.NoSuchAlgorithmException;
+import java.security.interfaces.RSAPrivateKey;
 import java.util.Base64;
 import java.util.Map;
 import java.util.Locale;
@@ -41,8 +44,14 @@ import edu.umd.cs.findbugs.annotations.CheckForNull;
 import edu.umd.cs.findbugs.annotations.Nullable;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.fabric8.kubernetes.api.model.Secret;
+import org.jenkinsci.main.modules.instance_identity.InstanceIdentity;
 import org.kohsuke.accmod.Restricted;
 import org.kohsuke.accmod.restrictions.NoExternalUse;
+
+import javax.crypto.BadPaddingException;
+import javax.crypto.Cipher;
+import javax.crypto.IllegalBlockSizeException;
+import javax.crypto.NoSuchPaddingException;
 
 /**
  * Collection of utilities for working with {@link Secret}s.
@@ -62,6 +71,39 @@ public abstract class SecretUtils {
 
     static final String JENKINS_IO_CREDENTIALS_SCOPE_LABEL = "jenkins.io/credentials-scope";
 
+    /**
+     * Decrypts a secret using Jenkins Instance ID private key after the secret has been decoded from base64.
+     * Assumes secrets are always encrypted, and that they are encrypted using the public key of the Jenkins on which
+     * this plugin is installed. Get the public key from the HTTP header of Jenkins root '/'.
+     * Example: {@code curl -I http://localhost:8080/ | grep 'X-Instance-Identity'}
+     * @param s the base64 decoded representation of the bytes.
+     * @return the byte[] or {@code null} if the string could not be converted.
+     */
+    private static byte[] decryptSecret(byte[] encryptedMessageBytes) {
+        RSAPrivateKey key = InstanceIdentity.get().getPrivate();
+
+        Cipher decryptCipher = null;
+        try {
+            decryptCipher = Cipher.getInstance("RSA");
+        } catch (NoSuchAlgorithmException e) {
+            throw new RuntimeException(e);
+        } catch (NoSuchPaddingException e) {
+            throw new RuntimeException(e);
+        }
+        try {
+            decryptCipher.init(Cipher.DECRYPT_MODE, key);
+        } catch (InvalidKeyException e) {
+            throw new RuntimeException(e);
+        }
+
+        try {
+            return decryptCipher.doFinal(encryptedMessageBytes);
+        } catch (IllegalBlockSizeException e) {
+            throw new RuntimeException(e);
+        } catch (BadPaddingException e) {
+            throw new RuntimeException(e);
+        }
+    }
 
     /**
      * Convert a String representation of the base64 encoded bytes of a UTF-8 String back to a String. 
@@ -95,7 +137,8 @@ public abstract class SecretUtils {
     @Restricted(NoExternalUse.class) // API is not yet concrete
     public static byte[] base64Decode(String s) {
         try {
-            return Base64.getDecoder().decode(s);
+            byte[] encryptedBytes = Base64.getDecoder().decode(s);
+            return decryptSecret(encryptedBytes);
         } catch (IllegalArgumentException ex) {
             LOG.log(Level.WARNING, "failed to base64decode Secret, is the format valid?  {0}", ex.getMessage());
         }
