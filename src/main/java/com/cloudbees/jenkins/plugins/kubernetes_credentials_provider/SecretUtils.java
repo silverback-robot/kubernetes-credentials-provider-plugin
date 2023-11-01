@@ -76,7 +76,7 @@ public abstract class SecretUtils {
      * Assumes secrets are always encrypted, and that they are encrypted using the public key of the Jenkins on which
      * this plugin is installed. Get the public key from the HTTP header of Jenkins root '/'.
      * Example: {@code curl -I http://localhost:8080/ | grep 'X-Instance-Identity'}
-     * @param s the base64 decoded representation of the bytes.
+     * @param encryptedMessageBytes the base64 decoded representation of the bytes.
      * @return the byte[] or {@code null} if the string could not be converted.
      */
     private static byte[] decryptSecret(byte[] encryptedMessageBytes) {
